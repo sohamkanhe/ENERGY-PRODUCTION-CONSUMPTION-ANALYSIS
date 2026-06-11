@@ -36,7 +36,7 @@ To run the analysis locally, ensure you have Python installed. It is recommended
 
 1.  **Clone the repository**:
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/sohamkanhe/ENERGY-PRODUCTION-CONSUMPTION-ANALYSIS.git
     cd energy-production-consumption-analysis
     ```
 
