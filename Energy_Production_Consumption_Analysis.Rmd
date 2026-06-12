@@ -1,0 +1,176 @@
+---
+title: "Energy Production and Consumption Analysis"
+output: html_notebook
+---
+
+# Energy Production and Consumption Analysis (R Version)
+
+This notebook replicates the energy production and consumption analysis performed in the original Python Jupyter Notebook. It includes data preprocessing, visualization, Multi-Criteria Decision Making (MCDM) analysis, and Machine Learning models for classification and regression.
+
+## 1. Importing Dependencies
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(caret)
+library(randomForest)
+library(e1071)
+library(class)
+library(forecast)
+library(xgboost)
+library(corrplot)
+library(scales)
+
+# For MCDM (Manual Implementation or using a library)
+# library(MCDM) 
+```
+
+## 2. Loading and Preprocessing Datasets
+
+```{r load_data}
+# Load the datasets
+hydro <- read_csv("data/US_Geo_Hydro.csv")
+solar <- read_csv("data/US_Solar.csv")
+wind <- read_csv("data/US_Wind.csv")
+
+# Rename columns and add energy type
+rename_cols <- function(df, type) {
+  df %>%
+    rename(area = area_developable_sq_km,
+           capacity = capacity_ac_mw) %>%
+    mutate(energy_type = type)
+}
+
+hydro <- rename_cols(hydro, "Hydro")
+solar <- rename_cols(solar, "Solar")
+wind <- rename_cols(wind, "Wind")
+
+# Combine datasets and handle missing values
+combined_df <- bind_rows(hydro, solar, wind) %>%
+  drop_na(latitude, longitude, area, capacity)
+
+head(combined_df)
+```
+
+## 3. Visualization
+
+### Number of Sites by Energy Type
+```{r vis_count}
+ggplot(combined_df, aes(x = energy_type, fill = energy_type)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Number of Sites by Energy Type", x = "Energy Type", y = "Count") +
+  theme_minimal()
+```
+
+### Capacity Distribution
+```{r vis_dist_capacity}
+ggplot(combined_df, aes(x = capacity, fill = energy_type)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  scale_x_log10() +
+  labs(title = "Capacity Distribution by Energy Type", x = "Capacity (AC MW) - Log Scale", y = "Frequency") +
+  theme_minimal()
+```
+
+### Site Locations
+```{r vis_map}
+ggplot(combined_df, aes(x = longitude, y = latitude, color = energy_type)) +
+  geom_point(alpha = 0.4, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Site Locations by Energy Type", x = "Longitude", y = "Latitude") +
+  theme_minimal()
+```
+
+## 4. Multi-Criteria Decision Making (MCDM)
+
+Implementation of TOPSIS ranking based on capacity and area.
+
+```{r topsis_ranking}
+# Simple TOPSIS implementation
+topsis <- function(matrix, weights, criteria) {
+  # Normalize matrix
+  norm_matrix <- sweep(matrix^2, 2, colSums(matrix^2), "/") %>% sqrt()
+  # Weighted matrix
+  weighted_matrix <- sweep(norm_matrix, 2, weights, "*")
+  
+  # Ideal best and worst
+  ideal_best <- apply(weighted_matrix, 2, max)
+  ideal_worst <- apply(weighted_matrix, 2, min)
+  
+  # Distances
+  dist_best <- sqrt(rowSums(sweep(weighted_matrix, 2, ideal_best, "-")^2))
+  dist_worst <- sqrt(rowSums(sweep(weighted_matrix, 2, ideal_worst, "-")^2))
+  
+  # Score
+  score <- dist_worst / (dist_best + dist_worst)
+  return(score)
+}
+
+# Apply TOPSIS
+mcdm_data <- combined_df %>% select(capacity, area) %>% as.matrix()
+weights <- c(0.6, 0.4)
+scores <- topsis(mcdm_data, weights, c(1, 1))
+combined_df$topsis_score <- scores
+
+combined_df %>% 
+  arrange(desc(topsis_score)) %>% 
+  select(latitude, longitude, capacity, area, topsis_score) %>% 
+  head(5)
+```
+
+## 5. Classification (Energy Type)
+
+```{r classification}
+# Select features
+features <- combined_df %>% 
+  select(latitude, longitude, area, capacity) %>% 
+  mutate(energy_type = as.factor(combined_df$energy_type))
+
+# Split data
+set.seed(42)
+trainIndex <- createDataPartition(features$energy_type, p = .8, list = FALSE)
+train_data <- features[trainIndex,]
+test_data  <- features[-trainIndex,]
+
+# Random Forest Model
+model_rf <- randomForest(energy_type ~ ., data = train_data, ntree = 100)
+preds_rf <- predict(model_rf, test_data)
+
+# Confusion Matrix
+confusionMatrix(preds_rf, test_data$energy_type)
+```
+
+## 6. Regression (Capacity Prediction)
+
+```{r regression}
+# Linear Regression
+model_lm <- lm(capacity ~ area + latitude + longitude, data = train_data)
+summary(model_lm)
+
+# Predictions
+preds_lm <- predict(model_lm, test_data)
+RMSE(preds_lm, test_data$capacity)
+```
+
+## 7. Time Series Forecasting (Consumption)
+
+```{r time_series}
+# Load consumption data
+cons_df <- read_excel("data/US_Prod_and_Cons.xlsx")
+# Ensure Month is Date
+cons_df$Month <- as.Date(cons_df$Month)
+
+# Create Time Series object
+ts_data <- ts(cons_df$`Total Renewable Energy Consumption`, frequency = 12, start = c(year(min(cons_df$Month)), month(min(cons_df$Month))))
+
+# ARIMA Model
+fit_arima <- auto.arima(ts_data)
+forecast_arima <- forecast(fit_arima, h = 12)
+
+# Plot Forecast
+plot(forecast_arima, main = "Renewable Energy Consumption Forecast")
+```
+
+## Conclusion
+
+This R notebook successfully replicates the core analysis steps from the Python implementation, including data processing, visualization, site ranking, and predictive modeling.
